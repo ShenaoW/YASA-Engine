@@ -111,23 +111,23 @@ function cleanDirectoryForSastGo(directory) {
     fs.removeSync(itemPath)
   })
 
-  // 递归遍历目录树，清空所有 cross_file_package_namespace 目录内容
-  ;(function traverse(dir) {
-    const items = fs.readdirSync(dir, { withFileTypes: true }) // 获取带类型信息的目录项
+    // 递归遍历目录树，清空所有 cross_file_package_namespace 目录内容
+    ; (function traverse(dir) {
+      const items = fs.readdirSync(dir, { withFileTypes: true }) // 获取带类型信息的目录项
 
-    for (const item of items) {
-      const itemPath = path.join(dir, item.name)
+      for (const item of items) {
+        const itemPath = path.join(dir, item.name)
 
-      if (item.isDirectory()) {
-        if (item.name === 'cross_file_package_namespace') {
-          fs.removeSync(itemPath)
-        } else {
-          // 递归处理子目录
-          traverse(itemPath)
+        if (item.isDirectory()) {
+          if (item.name === 'cross_file_package_namespace') {
+            fs.removeSync(itemPath)
+          } else {
+            // 递归处理子目录
+            traverse(itemPath)
+          }
         }
       }
-    }
-  })(directory)
+    })(directory)
 }
 
 // 移动src目录到上层的aaa目录
