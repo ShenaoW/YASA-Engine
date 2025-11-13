@@ -45,6 +45,14 @@ deps/uast4python
 /report/
 /node_modules/
 /workspace/
+test/javascript/benchmarks
+test/go/benchmarks
+test/python/benchmarks
+test/java/benchmarks
+test/benchmarks
+.prettierrc.json
+eslint.config.js
+deps/uast4go
 deps/uast4py
-src/uast
-src/report
+.DS_Store
+docs/
