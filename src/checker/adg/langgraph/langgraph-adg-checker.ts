@@ -1,12 +1,12 @@
-const _ = require("lodash");
-const Checker = require("../../common/checker");
-const LangGraphADGOutputStrategy = require("./langgraph-adg-output-strategy");
-const constValue = require("../../../util/constant");
-const astUtil = require("../../../util/ast-util");
-const logger = require("../../../util/logger")(__filename);
-const config = require("../../../config");
-const EntryPoint = require("../../../engine/analyzer/common/entrypoint");
-const { extractRelativePath } = require("../../../util/file-util");
+const _ = require('lodash')
+const Checker = require('../../common/checker')
+const LangGraphADGOutputStrategy = require('./langgraph-adg-output-strategy')
+const constValue = require('../../../util/constant')
+const astUtil = require('../../../util/ast-util')
+const logger = require('../../../util/logger')(__filename)
+const config = require('../../../config')
+const EntryPoint = require('../../../engine/analyzer/common/entrypoint')
+const { extractRelativePath } = require('../../../util/file-util')
 
 /**
  * LangGraphADGChecker analyzes LangGraph applications and builds Agent Dependency Graphs (ADG)
@@ -23,8 +23,8 @@ class LangGraphADGChecker extends Checker {
   /**
    * @param {ResultManager} resultManager
    */
-  constructor(resultManager) {
-    super(resultManager, "langgraph_adg");
+  constructor(resultManager: any) {
+    super(resultManager, 'langgraph_adg')
 
     // Track StateGraph instances: { graphVarName: { graphSymbol, nodes, edges, config } }
     this.graphs = new Map();
@@ -48,33 +48,29 @@ class LangGraphADGChecker extends Checker {
   /**
    * Trigger at start of analysis to initialize tracking
    */
-  triggerAtStartOfAnalyze(analyzer, scope, node, state, info) {
-    logger.info("[LangGraph ADG] Starting analysis...");
-    this.analyzer = analyzer;
-    this.moduleManager = analyzer.moduleManager;
+  triggerAtStartOfAnalyze(analyzer: any, scope: any, node: any, state: any, info: any) {
+    logger.info('[LangGraph ADG] Starting analysis...')
+    this.analyzer = analyzer
+    this.moduleManager = analyzer.moduleManager
 
     // Prepare entry points for analysis
-    this.prepareEntryPoints(analyzer);
+    this.prepareEntryPoints(analyzer)
 
     // Add entry points to analyzer
     if (this.entryPoints) {
-      analyzer.entryPoints.push(...this.entryPoints);
-      logger.info(
-        `[LangGraph ADG] Added ${this.entryPoints.length} entry point(s)`
-      );
+      analyzer.entryPoints.push(...this.entryPoints)
+      logger.info(`[LangGraph ADG] Added ${this.entryPoints.length} entry point(s)`)
     } else {
-      logger.warn(
-        "[LangGraph ADG] No entry points found, analysis may not work properly"
-      );
+      logger.warn('[LangGraph ADG] No entry points found, analysis may not work properly')
     }
   }
 
   /**
    * Prepare entry points by scanning all Python files in the directory
    */
-  prepareEntryPoints(analyzer) {
-    const fullCallGraphFileEntryPoint = require("../../common/full-callgraph-file-entrypoint");
-    if (config.entryPointMode !== "ONLY_CUSTOM") {
+  prepareEntryPoints(analyzer: any) {
+    const fullCallGraphFileEntryPoint = require('../../common/full-callgraph-file-entrypoint')
+    if (config.entryPointMode !== 'ONLY_CUSTOM') {
       // 使用callgraph边界作为entrypoint
       fullCallGraphFileEntryPoint.makeFullCallGraph(analyzer);
       const fullCallGraphEntrypoint =
@@ -94,19 +90,17 @@ class LangGraphADGChecker extends Checker {
   /**
    * Trigger at assignment to detect StateGraph instantiation and variable assignments
    */
-  triggerAtAssignment(analyzer, scope, node, state, info) {
-    if (!node || node.type !== "Assignment") return;
+  triggerAtAssignment(analyzer: any, scope: any, node: any, state: any, info: any) {
+    if (!node || node.type !== 'Assignment') return
 
-    logger.debug(
-      `[LangGraph ADG] triggerAtAssignment: ${node.type}, line ${node.loc?.start?.line}`
-    );
+    logger.debug(`[LangGraph ADG] triggerAtAssignment: ${node.type}, line ${node.loc?.start?.line}`)
 
-    const leftVal = state.varval[node.left];
-    const rightVal = state.varval[node.right];
+    const leftVal = state.varval[node.left]
+    const rightVal = state.varval[node.right]
 
     logger.debug(
       `[LangGraph ADG] Assignment - left: ${this.getVariableName(node.left)}, right type: ${rightVal?.vtype}, constructor: ${rightVal?.constructor?.name}`
-    );
+    )
 
     // Detect: workflow = StateGraph(MessagesState)
     if (this.isStateGraphInstance(rightVal)) {
@@ -157,64 +151,64 @@ class LangGraphADGChecker extends Checker {
   /**
    * Trigger before function calls to detect add_node, add_edge, etc.
    */
-  triggerAtFunctionCallBefore(analyzer, scope, node, state, info) {
-    if (!node || node.type !== "FunctionCall") return;
+  triggerAtFunctionCallBefore(analyzer: any, scope: any, node: any, state: any, info: any) {
+    if (!node || node.type !== 'FunctionCall') return
 
-    const { fclos, argvalues } = info;
-    if (!fclos) return;
+    const { fclos, argvalues } = info
+    if (!fclos) return
 
-    const funcName = this.getFunctionName(fclos, node);
+    const funcName = this.getFunctionName(fclos, node)
 
     // Detect: workflow.add_node("researcher", research_node)
-    if (funcName === "add_node") {
-      this.handleAddNode(node, state, argvalues, info);
+    if (funcName === 'add_node') {
+      this.handleAddNode(node, state, argvalues, info)
     }
 
     // Detect: workflow.add_edge(START, "researcher")
-    else if (funcName === "add_edge") {
-      this.handleAddEdge(node, state, argvalues);
+    else if (funcName === 'add_edge') {
+      this.handleAddEdge(node, state, argvalues)
     }
 
     // Detect: workflow.add_conditional_edges(...)
-    else if (funcName === "add_conditional_edges") {
-      this.handleAddConditionalEdges(node, state, argvalues);
+    else if (funcName === 'add_conditional_edges') {
+      this.handleAddConditionalEdges(node, state, argvalues)
     }
 
     // Detect: workflow.set_entry_point("researcher") or graph.add_edge(START, ...)
-    else if (funcName === "set_entry_point") {
-      this.handleSetEntryPoint(node, state, argvalues);
+    else if (funcName === 'set_entry_point') {
+      this.handleSetEntryPoint(node, state, argvalues)
     }
   }
 
   /**
    * Trigger at function definition to analyze node functions for Command returns
    */
-  triggerAtFunctionDefinition(analyzer, scope, node, state, info) {
-    if (!node || node.type !== "FunctionDefinition") return;
+  triggerAtFunctionDefinition(analyzer: any, scope: any, node: any, state: any, info: any) {
+    if (!node || node.type !== 'FunctionDefinition') return
 
-    const funcName = node.name?.name || node.id?.name;
-    if (!funcName) return;
+    const funcName = node.name?.name || node.id?.name
+    if (!funcName) return
 
     // Analyze function body for Command return statements
-    const commandInfo = this.analyzeCommandReturns(node, state);
+    const commandInfo = this.analyzeCommandReturns(node, state)
     if (commandInfo && commandInfo.hasCommand) {
       logger.info(
         `[LangGraph ADG] Function ${funcName} returns Command with goto: ${JSON.stringify(commandInfo.gotoTargets)}`
-      );
+      )
 
       // Store command info for later edge creation
       if (!this.commandReturns) {
-        this.commandReturns = new Map();
+        this.commandReturns = new Map()
       }
-      this.commandReturns.set(funcName, commandInfo);
+      this.commandReturns.set(funcName, commandInfo)
     }
   }
 
   /**
    * Trigger at end of analysis to build final ADG and output results
    */
-  triggerAtEndOfAnalyze(analyzer, scope, node, state, info) {
-    logger.info("[LangGraph ADG] Building final Agent Dependency Graph...");
+  triggerAtEndOfAnalyze(analyzer: any, scope: any, node: any, state: any, info: any) {
+    logger.info('[LangGraph ADG] Building final Agent Dependency Graph...')
 
     const adgs = [];
 
@@ -247,7 +241,7 @@ class LangGraphADGChecker extends Checker {
   /**
    * Check if a symbol value is a StateGraph instance
    */
-  isStateGraphInstance(symVal) {
+  isStateGraphInstance(symVal: any) {
     if (!symVal) return false;
 
     // Check if it's a function call result
@@ -262,7 +256,7 @@ class LangGraphADGChecker extends Checker {
   /**
    * Check if a symbol value is an LLM instance (ChatAnthropic, etc.)
    */
-  isLLMInstance(symVal) {
+  isLLMInstance(symVal: any) {
     if (!symVal) return false;
 
     if (symVal.vtype === "object" || symVal.vtype === "class") {
@@ -282,7 +276,7 @@ class LangGraphADGChecker extends Checker {
   /**
    * Check if a call is create_react_agent
    */
-  isCreateReactAgentCall(symVal) {
+  isCreateReactAgentCall(symVal: any) {
     // This checks the result of the call, we need to check during function call
     return false;
   }
@@ -290,7 +284,7 @@ class LangGraphADGChecker extends Checker {
   /**
    * Get variable name from assignment left side
    */
-  getVariableName(leftNode) {
+  getVariableName(leftNode: any) {
     if (!leftNode) return null;
 
     if (leftNode.type === "Identifier") {
@@ -303,7 +297,7 @@ class LangGraphADGChecker extends Checker {
   /**
    * Get function name from function closure or AST node
    */
-  getFunctionName(fclos, node) {
+  getFunctionName(fclos: any, node: any) {
     // Try to get from function closure
     if (fclos && fclos.name) {
       return fclos.name;
@@ -323,7 +317,7 @@ class LangGraphADGChecker extends Checker {
   /**
    * Get type name from symbol value
    */
-  getTypeName(symVal) {
+  getTypeName(symVal: any) {
     if (!symVal) return null;
 
     // Check constructor or type info
@@ -351,7 +345,7 @@ class LangGraphADGChecker extends Checker {
    * Handle add_node call
    * Supports: add_node(name, function) or add_node(function)
    */
-  handleAddNode(node, state, argvalues, info) {
+  handleAddNode(node: any, state: any, argvalues: any, info: any) {
     const graphInstance = this.findGraphInstance(node, state);
     if (!graphInstance) {
       logger.debug(
@@ -427,7 +421,7 @@ class LangGraphADGChecker extends Checker {
    * Handle add_edge call
    * Form: add_edge(start, end) or add_edge(START, "node")
    */
-  handleAddEdge(node, state, argvalues) {
+  handleAddEdge(node: any, state: any, argvalues: any) {
     const graphInstance = this.findGraphInstance(node, state);
     if (!graphInstance) return;
 
@@ -466,7 +460,7 @@ class LangGraphADGChecker extends Checker {
    * - add_conditional_edges(source, path_function)
    * - add_conditional_edges(source, path_function, path_map)
    */
-  handleAddConditionalEdges(node, state, argvalues) {
+  handleAddConditionalEdges(node: any, state: any, argvalues: any) {
     const graphInstance = this.findGraphInstance(node, state);
     if (!graphInstance) return;
 
@@ -517,7 +511,7 @@ class LangGraphADGChecker extends Checker {
   /**
    * Handle set_entry_point call
    */
-  handleSetEntryPoint(node, state, argvalues) {
+  handleSetEntryPoint(node: any, state: any, argvalues: any) {
     const graphInstance = this.findGraphInstance(node, state);
     if (!graphInstance) return;
 
@@ -540,7 +534,7 @@ class LangGraphADGChecker extends Checker {
   /**
    * Find the graph instance that the current method call belongs to
    */
-  findGraphInstance(node, state) {
+  findGraphInstance(node: any, state: any) {
     // Try to find which graph this method is called on
     // Look for: workflow.add_node(...) where workflow is a StateGraph
 
@@ -565,7 +559,7 @@ class LangGraphADGChecker extends Checker {
   /**
    * Extract string value from symbol value
    */
-  extractStringValue(symVal) {
+  extractStringValue(symVal: any) {
     if (!symVal) return null;
 
     if (typeof symVal === "string") {
@@ -582,7 +576,7 @@ class LangGraphADGChecker extends Checker {
   /**
    * Extract node name (handles START, END, string literals, Identifier)
    */
-  extractNodeName(symVal) {
+  extractNodeName(symVal: any) {
     if (!symVal) return null;
 
     // String literal
@@ -600,7 +594,7 @@ class LangGraphADGChecker extends Checker {
   /**
    * Infer node name from function symbol
    */
-  inferNodeName(funcSymbol) {
+  inferNodeName(funcSymbol: any) {
     if (!funcSymbol) return null;
 
     if (funcSymbol.name) {
@@ -617,7 +611,7 @@ class LangGraphADGChecker extends Checker {
   /**
    * Get function name from a symbol value
    */
-  getFunctionNameFromValue(funcSymbol) {
+  getFunctionNameFromValue(funcSymbol: any) {
     if (!funcSymbol) return null;
 
     if (funcSymbol.name) {
@@ -634,7 +628,7 @@ class LangGraphADGChecker extends Checker {
   /**
    * Analyze function for Command return statements
    */
-  analyzeCommandReturns(funcDefNode, state) {
+  analyzeCommandReturns(funcDefNode: any, state: any) {
     if (!funcDefNode || !funcDefNode.body) return null;
 
     const commandInfo = {
@@ -654,7 +648,7 @@ class LangGraphADGChecker extends Checker {
   /**
    * Recursively traverse AST looking for Command returns
    */
-  traverseForCommandReturns(node, commandInfo, state) {
+  traverseForCommandReturns(node: any, commandInfo: any, state: any) {
     if (!node) return;
 
     if (node.type === "ReturnStatement" && node.value) {
@@ -711,8 +705,8 @@ class LangGraphADGChecker extends Checker {
   /**
    * Extract goto targets from Command goto argument
    */
-  extractGotoTargets(gotoNode, state) {
-    const targets = [];
+  extractGotoTargets(gotoNode: any, state: any) {
+    const targets: any[] = [];
 
     if (!gotoNode) return targets;
 
@@ -741,8 +735,8 @@ class LangGraphADGChecker extends Checker {
   /**
    * Extract destinations from path_map (dict or list)
    */
-  extractDestinationsFromPathMap(pathMap, state) {
-    const destinations = [];
+  extractDestinationsFromPathMap(pathMap: any, state: any) {
+    const destinations: any[] = [];
 
     if (!pathMap) return destinations;
 
@@ -774,8 +768,8 @@ class LangGraphADGChecker extends Checker {
   /**
    * Analyze path function for possible return values
    */
-  analyzePathFunction(pathFunc, state) {
-    const destinations = [];
+  analyzePathFunction(pathFunc: any, state: any) {
+    const destinations: any[] = [];
 
     if (!pathFunc || !pathFunc.fdef) return destinations;
 
@@ -795,10 +789,10 @@ class LangGraphADGChecker extends Checker {
   /**
    * Find all return statements in a function
    */
-  findReturnStatements(funcNode) {
-    const returns = [];
+  findReturnStatements(funcNode: any) {
+    const returns: any[] = [];
 
-    const traverse = (node) => {
+    const traverse = (node: any) => {
       if (!node) return;
 
       if (node.type === "ReturnStatement") {
@@ -825,7 +819,7 @@ class LangGraphADGChecker extends Checker {
   /**
    * Extract LLM model name from instantiation
    */
-  extractLLMModelName(astNode, state) {
+  extractLLMModelName(astNode: any, state: any) {
     if (!astNode || astNode.type !== "FunctionCall") return null;
 
     const args = astNode.args;
@@ -843,8 +837,8 @@ class LangGraphADGChecker extends Checker {
   /**
    * Extract create_react_agent info (llm, tools, prompt)
    */
-  extractReactAgentInfo(astNode, state) {
-    const info = {
+  extractReactAgentInfo(astNode: any, state: any) {
+    const info: any = {
       llm: null,
       tools: [],
       systemPrompt: null,
@@ -877,8 +871,8 @@ class LangGraphADGChecker extends Checker {
   /**
    * Extract tool names from a list
    */
-  extractToolNames(toolsNode, state) {
-    const tools = [];
+  extractToolNames(toolsNode: any, state: any) {
+    const tools: any[] = [];
 
     if (!toolsNode) return tools;
 
@@ -900,7 +894,7 @@ class LangGraphADGChecker extends Checker {
   /**
    * Find agent info associated with a node function
    */
-  findAgentInfoForNode(nodeFunc, state) {
+  findAgentInfoForNode(nodeFunc: any, state: any) {
     if (!nodeFunc) return null;
 
     const funcName = this.getFunctionNameFromValue(nodeFunc);
@@ -919,8 +913,8 @@ class LangGraphADGChecker extends Checker {
   /**
    * Build final ADG structure from collected data
    */
-  buildADG(graphName, graphData) {
-    const adg = {
+  buildADG(graphName: any, graphData: any) {
+    const adg: any = {
       id: graphName,
       name: graphName,
       nodes: [],
@@ -945,14 +939,14 @@ class LangGraphADGChecker extends Checker {
     }
 
     // Add edges
-    adg.edges = graphData.edges.map((edge) => ({
+    adg.edges = graphData.edges.map((edge: any) => ({
       from: edge.from,
       to: edge.to,
       type: "control_flow",
     }));
 
     // Add conditional edges
-    adg.conditionalEdges = graphData.conditionalEdges.map((edge) => ({
+    adg.conditionalEdges = graphData.conditionalEdges.map((edge: any) => ({
       from: edge.from,
       to: edge.to,
       type: "conditional",
@@ -960,7 +954,7 @@ class LangGraphADGChecker extends Checker {
     }));
 
     // Add command edges (dynamic routing)
-    adg.commandEdges = graphData.commandEdges.map((edge) => ({
+    adg.commandEdges = graphData.commandEdges.map((edge: any) => ({
       from: edge.from,
       to: edge.to,
       type: "command",
