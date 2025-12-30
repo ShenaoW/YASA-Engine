@@ -8,16 +8,6 @@ const config = require('../../../config')
 const EntryPoint = require('../../../engine/analyzer/common/entrypoint')
 const { extractRelativePath } = require('../../../util/file-util')
 const SourceLine = require('../../../engine/analyzer/common/source-line')
-const {
-  determineToolType,
-  extractToolCodeSnippet,
-  extractVariableName,
-  extractStringValue,
-  extractNodeName,
-  computeValue,
-  isStateGraphInstance,
-  isAgentCreationMethod,
-} = require('./langgraph-adg-utils')
 
 /**
  * LangGraphADGChecker analyzes LangGraph applications and builds Agent Dependency Graphs (ADG)
@@ -146,10 +136,11 @@ class LangGraphADGChecker extends Checker {
     // ==================== Graph Instantiation ====================
     // Detect: workflow = StateGraph(MessagesState)
     // Check if this function call is StateGraph instantiation in an assignment
-    if (isStateGraphInstance(node)) {
+
+    if (this.isStateGraphInstance(node)) {
       const parent = node.parent;
       if (parent && parent.type === 'AssignmentExpression' && parent.left) {
-        const graphVarName = extractVariableName(parent.left);
+        const graphVarName = this.extractGraphVarName(parent.left);
         if (graphVarName) {
           logger.info(`[LangGraph ADG] Found StateGraph instance: ${graphVarName}`);
           this.graphs.set(graphVarName, {
@@ -202,7 +193,7 @@ class LangGraphADGChecker extends Checker {
     // ==================== Agent Creation ====================
     // Detect: create_XXX_agent calls
     // At this point, argvalues contains symbol values from YASA's pointer analysis
-    if (isAgentCreationMethod(funcName)) {
+    if (this.isAgentCreationMethod(funcName)) {
       this.handleAgentCreationCall(node, state, argvalues, info, funcName);
     }
 
@@ -292,13 +283,13 @@ class LangGraphADGChecker extends Checker {
       const nameArg = argvalues[0];
       const funcArg = argvalues[1];
 
-      nodeName = computeValue(nameArg);
+      nodeName = this.computeValue(nameArg);
       nodeFunction = funcArg;
     } else if (argvalues && argvalues.length === 1) {
       // Form: add_node(research_node)
       // name is inferred from function name
       nodeFunction = argvalues[0];
-      nodeName = computeValue(nodeFunction).split(".").pop();
+      nodeName = this.computeValue(nodeFunction).split(".").pop();
     }
 
     if (!nodeName) {
@@ -313,7 +304,7 @@ class LangGraphADGChecker extends Checker {
     const nodeInfo: any = {
       name: nodeName,
       nodeFunction: nodeFunction,
-      functionName: computeValue(nodeFunction),
+      functionName: this.computeValue(nodeFunction),
       astNode: node,
       isAgent: false,
       agentInfo: null,
@@ -397,8 +388,8 @@ class LangGraphADGChecker extends Checker {
 
     // Try to extract from argvalues first
     if (argvalues && argvalues.length >= 2) {
-      startNode = computeValue(argvalues[0]).split(".").pop();
-      endNode = computeValue(argvalues[1]).split(".").pop();
+      startNode = this.computeValue(argvalues[0]).split(".").pop();
+      endNode = this.computeValue(argvalues[1]).split(".").pop();
     }
 
     if (!startNode || !endNode) {
@@ -439,7 +430,7 @@ class LangGraphADGChecker extends Checker {
       return;
     }
 
-    const sourceNode = computeValue(argvalues[0]).split(".").pop();
+    const sourceNode = this.computeValue(argvalues[0]).split(".").pop();
     const pathFunction = argvalues[1];
     const pathMap = argvalues.length >= 3 ? argvalues[2] : null;
 
@@ -534,7 +525,7 @@ class LangGraphADGChecker extends Checker {
 
     if (!argvalues || argvalues.length < 1) return;
 
-    const entryNode = computeValue(argvalues[0]).split(".").pop();
+    const entryNode = this.computeValue(argvalues[0]).split(".").pop();
     if (entryNode) {
       logger.info(`[LangGraph ADG] Setting entry point: ${entryNode}`);
       graphInstance.entryPoint = entryNode;
@@ -625,7 +616,7 @@ class LangGraphADGChecker extends Checker {
 
     const llmVarName = fclos.qid.replace(/\.bind_tools$/, "");
     const toolSetValue = argvalues[0];
-    const tools = computeValue(toolSetValue);
+    const tools = this.computeValue(toolSetValue);
 
     if (llmVarName && toolSetValue.length > 0) {
       logger.info(
@@ -652,7 +643,203 @@ class LangGraphADGChecker extends Checker {
   }
 
   // ==================== Helper Methods ====================
-  
+
+  /**
+   * Compute value from YASA symbol value
+   * Handles various vtypes: symbol, object, union, primitive, fclos, etc.
+   * 
+   * @param symVal - Symbol value from YASA's pointer analysis
+   * @returns For collections: array of identifiers; For single values: string identifier, string content, or null
+   */
+  computeValue(symVal: any): any {
+    if (!symVal) return null;
+
+    const vtype = symVal.vtype;
+    if (!vtype) {
+      // No vtype, try to get qid as fallback
+      return symVal.qid || null;
+    }
+
+    // symbol: For BinaryExpression, compute left and right values and return the result;
+    // For other types, set qid directly for Identifier;
+    // SymbolValue extends ObjectValue, represents variable references
+    if (vtype === "symbol" || vtype === "fclos") {
+      if(symVal.type === "BinaryExpression") {
+        const left = this.computeValue(symVal.left);
+        const right = this.computeValue(symVal.right);
+        return `${left}${symVal.operator}${right}`;
+      } else {
+        return symVal.qid;
+      }
+    }
+
+    // object: Compute each Value in field
+    // ObjectValue: field contains properties (dict), not array
+    if (vtype === "object") {
+      // For object type, field is a dict of properties
+      // We need to compute each Value in field
+      if (symVal.field && typeof symVal.field === "object" && !Array.isArray(symVal.field)) {
+        // field is a dict, extract all values
+        const identifiers: string[] = [];
+        for (const key in symVal.field) {
+          if (Object.prototype.hasOwnProperty.call(symVal.field, key)) {
+            const fieldValue = symVal.field[key];
+            if (fieldValue && fieldValue.vtype) {
+              // It's a YASA Value, compute it
+              const id = this.computeValue(fieldValue);
+              if (id) {
+                if (Array.isArray(id)) {
+                  identifiers.push(...id);
+                } else {
+                  identifiers.push(id);
+                }
+              }
+            }
+          }
+        }
+        return identifiers.length > 0 ? identifiers : null;
+      }
+    }
+
+    // union: field is an array of possible values
+    if (vtype === "union") {
+      if (symVal.field && Array.isArray(symVal.field)) {
+        const identifiers: string[] = [];
+        for (const elem of symVal.field) {
+          if (elem && elem.vtype) {
+            const id = this.computeValue(elem);
+            if (id) {
+              if (Array.isArray(id)) {
+                identifiers.push(...id);
+              } else {
+                identifiers.push(id);
+              }
+            }
+          }
+        }
+        return identifiers.length > 0 ? identifiers : null;
+      }
+    }
+
+    // primitive / const: extract raw_value or value
+    if (vtype === "primitive" || vtype === "const") {
+      return symVal.raw_value || symVal.value || null;
+    }
+
+    // scope / package: extract qid or name
+    if (vtype === "scope" || vtype === "package") {
+      return symVal.qid || symVal.name || null;
+    }
+
+    // BVT (Bound Value Type): compute children
+    if (vtype === "BVT") {
+      if (symVal.children && Array.isArray(symVal.children)) {
+        const identifiers: string[] = [];
+        for (const child of symVal.children) {
+          const id = this.computeValue(child);
+          if (id) {
+            if (Array.isArray(id)) {
+              identifiers.push(...id);
+            } else {
+              identifiers.push(id);
+            }
+          }
+        }
+        return identifiers.length > 0 ? identifiers : null;
+      }
+    }
+
+    // list: if it exists as a separate type
+    if (vtype === "list") {
+      if (symVal.field && Array.isArray(symVal.field)) {
+        const identifiers: string[] = [];
+        for (const elem of symVal.field) {
+          const id = this.computeValue(elem);
+          if (id) {
+            if (Array.isArray(id)) {
+              identifiers.push(...id);
+            } else {
+              identifiers.push(id);
+            }
+          }
+        }
+        return identifiers.length > 0 ? identifiers : null;
+      }
+      if (symVal.value && Array.isArray(symVal.value)) {
+        const identifiers: string[] = [];
+        for (const elem of symVal.value) {
+          const id = this.computeValue(elem);
+          if (id) {
+            if (Array.isArray(id)) {
+              identifiers.push(...id);
+            } else {
+              identifiers.push(id);
+            }
+          }
+        }
+        return identifiers.length > 0 ? identifiers : null;
+      }
+    }
+
+    // unknown, undefine, uninitialized: return null
+    if (vtype === "unknown" || vtype === "undefine" || vtype === "uninitialized") {
+      return null;
+    }
+
+    // Fallback: try to get qid
+    return symVal.qid || null;
+  }
+
+  /**
+   * Check if a symbol value is a StateGraph instance
+   */
+  isStateGraphInstance(symVal: any): boolean {
+    if (symVal.type === "CallExpression" && symVal.callee.type === "Identifier") {
+      return symVal.callee.name.includes("StateGraph");
+    } else {
+      return false;
+    }
+  }
+
+  /**
+   * Extract variable name from AST node or symbol value
+   */
+  extractGraphVarName(node: any): string | null {
+    if (!node) return null;
+
+    // Symbol value: has sid
+    if (node.sid) {
+      return node.sid;
+    }
+
+    // AST Identifier/Name node
+    if (node.type === "Identifier" || node.type === "Name") {
+      return node.name || node.id?.name || null;
+    }
+
+    // Symbol value with name
+    if (node.name) {
+      return node.name;
+    }
+
+    // Try to get from id
+    if (node.id && node.id.name) {
+      return node.id.name;
+    }
+
+    // String literal
+    if (typeof node === "string") {
+      return node;
+    }
+
+    // Value with string value
+    if (node.vtype === "const" && typeof node.value === "string") {
+      return node.value;
+    }
+
+    return null;
+  }
+
   /**
    * Find the graph instance that the current method call belongs to
    */
@@ -732,7 +919,7 @@ class LangGraphADGChecker extends Checker {
     ) {
       const items = pathMap.value || [];
       for (const item of items) {
-        const dest = extractNodeName(item);
+        const dest = this.extractNodeName(item);
         if (dest) destinations.push(dest);
       }
     }
@@ -741,7 +928,7 @@ class LangGraphADGChecker extends Checker {
       // Extract values from dict
       if (pathMap.field) {
         for (const [key, val] of Object.entries(pathMap.field)) {
-          const dest = extractNodeName(val);
+          const dest = this.extractNodeName(val);
           if (dest) destinations.push(dest);
         }
       }
@@ -763,7 +950,7 @@ class LangGraphADGChecker extends Checker {
 
     for (const retNode of returns) {
       if (retNode.value) {
-        const dest = extractNodeName(retNode.value);
+        const dest = this.extractNodeName(retNode.value);
         if (dest) destinations.push(dest);
       }
     }
@@ -802,13 +989,30 @@ class LangGraphADGChecker extends Checker {
   }
 
   /**
+   * Check if a function name is an agent creation method
+   */
+  isAgentCreationMethod(funcName: string): boolean {
+    const agentCreationMethods = [
+      "create_agent",
+      "create_react_agent",
+      "create_tool_calling_agent"
+    ];
+    for (const method of agentCreationMethods) {
+      if (funcName.endsWith(method)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
    * Find agent info associated with a node function
    * Checks if the function calls agent.invoke() and matches it to known agents
    */
   findAgentInfoForNode(nodeFunc: any, state: any) {
     if (!nodeFunc) return null;
 
-    const funcName = computeValue(nodeFunc).split(".").pop();
+    const funcName = this.computeValue(nodeFunc).split(".").pop();
     if (!funcName) return null;
 
     // Check if function body contains agent.invoke() calls
@@ -933,17 +1137,78 @@ class LangGraphADGChecker extends Checker {
         // Handle tuple form: (name, function)
         if (item.type === "Tuple" || (Array.isArray(item) && item.length === 2)) {
           const nameItem = Array.isArray(item) ? item[0] : (item.elements ? item.elements[0] : null);
-          const nodeName = extractStringValue(nameItem) || extractNodeName(nameItem);
+          const nodeName = this.extractStringValue(nameItem) || this.extractNodeName(nameItem);
           if (nodeName) nodes.push(nodeName);
         } else {
           // Regular node reference
-          const nodeName = extractStringValue(item) || extractNodeName(item);
+          const nodeName = this.extractStringValue(item) || this.extractNodeName(item);
           if (nodeName) nodes.push(nodeName);
         }
       }
     }
 
     return nodes;
+  }
+
+  /**
+   * Extract string value from symbol value or AST node
+   */
+  extractStringValue(symVal: any): string | null {
+    if (!symVal) return null;
+
+    if (typeof symVal === "string") {
+      return symVal;
+    }
+
+    // String literal AST node
+    if (symVal.type === "StringLiteral" || symVal.type === "Str") {
+      return symVal.value || symVal.s || null;
+    }
+
+    // Symbol value with const string
+    if (symVal.vtype === "const" && typeof symVal.value === "string") {
+      return symVal.value;
+    }
+
+    // Try to get from raw_value
+    if (symVal.raw_value && typeof symVal.raw_value === "string") {
+      return symVal.raw_value;
+    }
+
+    return null;
+  }
+
+  /**
+   * Extract node name (handles START, END, string literals, Identifier, symbol values)
+   */
+  extractNodeName(symVal: any): string | null {
+    if (!symVal) return null;
+
+    // String literal
+    const strVal = this.extractStringValue(symVal);
+    if (strVal) return strVal;
+
+    // Symbol value: has sid
+    if (symVal.sid) {
+      return symVal.sid;
+    }
+
+    // Identifier (START, END constants)
+    if (symVal.name) {
+      return symVal.name;
+    }
+
+    // AST Identifier/Name node
+    if (symVal.type === "Identifier" || symVal.type === "Name") {
+      return symVal.name || symVal.id?.name || null;
+    }
+
+    // Try to get from id
+    if (symVal.id && symVal.id.name) {
+      return symVal.id.name;
+    }
+
+    return null;
   }
 
   /**
@@ -971,7 +1236,7 @@ class LangGraphADGChecker extends Checker {
     // 或者直接用 Object.entries 遍历 toolSet 的 key 和 value
     const toolSet = toolSetInfo.field;
     for (const [key, toolInfo] of Object.entries(toolSet)) {
-      const toolName = computeValue(toolInfo);
+      const toolName = this.computeValue(toolInfo);
       if (toolName){
         this.registerTool(toolInfo, toolName);
         registeredTools.push(toolName);
@@ -998,10 +1263,10 @@ class LangGraphADGChecker extends Checker {
     }
 
     // Determine tool type
-    const toolType = determineToolType(toolName);
+    const toolType = this.determineToolType(toolName);
 
     // Extract code snippet
-    const codeSnippet = extractToolCodeSnippet(this.analyzer, toolInfo);
+    const codeSnippet = this.extractToolCodeSnippet(this.analyzer, toolInfo);
 
     // Register tool
     this.tools.set(toolName, {
@@ -1012,6 +1277,93 @@ class LangGraphADGChecker extends Checker {
 
     logger.debug(`[LangGraph ADG] Registered tool: ${toolName} (type: ${toolType})`);
     return toolName;
+  }
+
+  /**
+   * Determine tool type based on tool name
+   * Custom tools: names that start with file paths (/, ./, ../) or contain path separators
+   * Predefined tools: all other tools (from langchain, langchain_community, etc.)
+   */
+  determineToolType(toolName: string): "custom" | "predefined" {
+    // Check if tool name looks like a file path
+    // Custom tools often have paths like: "./tools/search", "/path/to/tool", "../utils/tool"
+    if (toolName.startsWith("/") || 
+        toolName.startsWith("./") || 
+        toolName.startsWith("../") ||
+        toolName.includes("/") ||
+        toolName.includes("\\")) {
+      return "custom";
+    }
+    
+    // Predefined tools are typically simple names like "search", "calculator", etc.
+    // or from langchain packages
+    return "predefined";
+  }
+
+  /**
+   * Extract code snippet from tool node
+   * Supports both AST nodes and YASA symbol values
+   * 
+   * @param toolInfo - Tool node (AST node or YASA symbol value)
+   * @param analyzer - Optional analyzer instance for accessing sourceCodeCache
+   * @returns Code snippet string or null
+   */
+  extractToolCodeSnippet(analyzer: any, toolInfo: any): string | null {
+    if (!toolInfo) return null;
+
+    // Try to extract location from various possible structures
+    let loc = null;
+    if (toolInfo.vtype === "symbol") {
+      loc = toolInfo.loc;
+    } else if (toolInfo.vtype === "fclos") {
+      loc = toolInfo.fdef.loc;
+    } else {
+      logger.debug(`[LangGraph ADG] Unsupported tool type: ${toolInfo.type}`);
+      return null;
+    }
+
+    const sourcefile = loc.sourcefile;
+    const startLine = loc.start.line;
+    const endLine = loc.end.line;
+
+    // Use analyzer's sourceCodeCache to populate SourceLine.codeCache, then use getCodeByLocation
+    if (analyzer && analyzer.sourceCodeCache) {
+      const sourceCode = analyzer.sourceCodeCache[sourcefile];
+      if (sourceCode) {
+        // Store code in SourceLine.codeCache if not already stored
+        // This ensures getCodeByLocation can work properly
+        try {
+          SourceLine.storeCode(sourcefile, sourceCode);
+          logger.debug(`[LangGraph ADG] Stored code in SourceLine.codeCache for: ${sourcefile}`);
+        } catch (error) {
+          logger.debug(`[LangGraph ADG] Failed to store code in SourceLine: ${error}`);
+        }
+
+        // Now try to use getCodeByLocation (should work now that codeCache is populated)
+        try {
+          const codeSnippet = SourceLine.getCodeByLocation(loc);
+          if (codeSnippet && codeSnippet.trim().length > 0) {
+            logger.debug(`[LangGraph ADG] Extracted code snippet from SourceLine.getCodeByLocation: ${sourcefile}:${startLine}-${endLine}`);
+            return codeSnippet;
+          }
+        } catch (error) {
+          logger.debug(`[LangGraph ADG] Failed to extract from SourceLine.getCodeByLocation: ${error}`);
+        }
+
+        // Fallback: Direct extraction from sourceCodeCache
+        const lines = sourceCode.split('\n');
+        const startIdx = startLine - 1;
+        const endIdx = endLine - 1;
+        if (startIdx >= 0 && endIdx < lines.length && startIdx <= endIdx) {
+          const snippet = lines.slice(startIdx, endIdx + 1).join('\n');
+          logger.debug(`[LangGraph ADG] Extracted code snippet directly from sourceCodeCache: ${sourcefile}:${startLine}-${endLine}`);
+          return snippet;
+        }
+      }
+    }
+
+    logger.debug(`[LangGraph ADG] Could not extract code snippet: sourcefile=${sourcefile}, startLine=${startLine}, endLine=${endLine}, hasAnalyzer=${!!analyzer}, hasSourceCodeCache=${!!(analyzer && analyzer.sourceCodeCache && analyzer.sourceCodeCache[sourcefile])}`);
+    return null;
   }
   
   /**
@@ -1073,7 +1425,7 @@ class LangGraphADGChecker extends Checker {
           (astArg.keyword && astArg.keyword.name)) {
         const argName = astArg.arg || astArg.id?.name || astArg.keyword?.name;
         if (argName === "llm") {
-          const llmResult = computeValue(argValue);
+          const llmResult = this.computeValue(argValue);
           info.llm = llmResult;
           // Register LLM if not already registered
           if (llmResult && !this.llms.has(llmResult)) {
@@ -1084,18 +1436,18 @@ class LangGraphADGChecker extends Checker {
           if (argValue) {
             this.registerTools(argValue);
             // Store tool names in info.tools
-            const toolsResult = computeValue(argValue);
+            const toolsResult = this.computeValue(argValue);
             info.tools = Array.isArray(toolsResult) ? toolsResult : (toolsResult ? [toolsResult] : []);
           }
         } else if (argName === "prompt" || argName === "system_prompt") {
-          const promptResult = computeValue(argValue || astArg.value || astArg);
+          const promptResult = this.computeValue(argValue || astArg.value || astArg);
           info.systemPrompt = typeof promptResult === "string" ? promptResult : null;
         }
       } else {
         // Handle positional arguments: create_react_agent(..., [...], ...)
         if (positionalIndex === 0) {
           // First positional arg: LLM
-          const llmResult = computeValue(argValue);
+          const llmResult = this.computeValue(argValue);
           info.llm = llmResult;
           // Register LLM if not already registered
           if (llmResult && !this.llms.has(llmResult)) {
@@ -1108,13 +1460,13 @@ class LangGraphADGChecker extends Checker {
             // Register tools
             this.registerTools(argValue);
             // Store tool names in info.tools
-            const toolsResult = computeValue(argValue);
+            const toolsResult = this.computeValue(argValue);
             info.tools = Array.isArray(toolsResult) ? toolsResult : (toolsResult ? [toolsResult] : []);
           }
           positionalIndex++;
         } else if (positionalIndex === 2) {
           // Third positional arg: prompt (if not provided as keyword)
-          const promptResult = computeValue(argValue);
+          const promptResult = this.computeValue(argValue);
           info.systemPrompt = typeof promptResult === "string" ? promptResult : null;
           positionalIndex++;
         }
