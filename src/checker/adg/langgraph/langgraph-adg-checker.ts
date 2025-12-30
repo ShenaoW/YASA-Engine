@@ -28,6 +28,7 @@ class LangGraphADGChecker extends Checker {
     super(resultManager, 'langgraph_adg')
 
     // =========================== YASA Context Variables ===========================
+
     // Entry points for analysis
     this.entryPoints = [];
 
@@ -39,6 +40,7 @@ class LangGraphADGChecker extends Checker {
     this.info = null;
 
     // ========================= LangGraph Context Variables =========================
+
     // Track StateGraph instances: { graphVarName: { graphSymbol, nodes, edges, config } }
     this.graphs = new Map();
 
@@ -137,24 +139,8 @@ class LangGraphADGChecker extends Checker {
     // Detect: workflow = StateGraph(MessagesState)
     // Check if this function call is StateGraph instantiation in an assignment
 
-    if (this.isStateGraphInstance(node)) {
-      const parent = node.parent;
-      if (parent && parent.type === 'AssignmentExpression' && parent.left) {
-        const graphVarName = this.extractGraphVarName(parent.left);
-        if (graphVarName) {
-          logger.info(`[LangGraph ADG] Found StateGraph instance: ${graphVarName}`);
-          this.graphs.set(graphVarName, {
-            graphVarName: graphVarName,
-            graphSymbolVal: node.callee?.name || funcName,
-            nodes: new Map(),
-            edges: [],
-            conditionalEdges: [],
-            commandEdges: [],
-            entryPoint: null,
-            astNode: parent,
-          });
-        }
-      }
+    if (funcName.endsWith('StateGraph')) {
+      this.handleStateGraphInstantiation(node, state, argvalues, info)
     }
 
     // ==================== Graph Context ====================
@@ -261,6 +247,24 @@ class LangGraphADGChecker extends Checker {
   }
 
   // ==================== Handler Methods ====================
+
+  handleStateGraphInstantiation(node: any, state: any, argvalues: any, info: any) {
+    const parent = node.parent;
+      if (parent && parent.type === 'AssignmentExpression' && parent.left) {
+        const graphVarName = this.extractGraphVarName(parent.left);
+        if (graphVarName) {
+          logger.info(`[LangGraph ADG] Found StateGraph instance: ${graphVarName}`);
+          this.graphs.set(graphVarName, {
+            graphVarName: graphVarName,
+            nodes: new Map(),
+            edges: [],
+            conditionalEdges: [],
+            commandEdges: [],
+            entryPoint: null,
+          });
+        }
+      }
+    }
 
   /**
    * Handle add_node call
@@ -788,17 +792,6 @@ class LangGraphADGChecker extends Checker {
 
     // Fallback: try to get qid
     return symVal.qid || null;
-  }
-
-  /**
-   * Check if a symbol value is a StateGraph instance
-   */
-  isStateGraphInstance(symVal: any): boolean {
-    if (symVal.type === "CallExpression" && symVal.callee.type === "Identifier") {
-      return symVal.callee.name.includes("StateGraph");
-    } else {
-      return false;
-    }
   }
 
   /**
