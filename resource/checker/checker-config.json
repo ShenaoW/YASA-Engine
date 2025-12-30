@@ -156,9 +156,9 @@
     "checkerPath": "checker/sdk/get-ast-source-code-checker.ts",
     "description": "获取AST对应的源码"
   },
-  {
+    {
     "checkerId": "langgraph_adg",
-    "checkerPath": "src/checker/adg/langgraph/langgraph-adg-checker.js",
+    "checkerPath": "checker/adg/langgraph/langgraph-adg-checker.ts",
     "description": "LangGraph Agent Dependency Graph"
   }
 ]

@@ -8,12 +8,21 @@ const logger = require('../../../util/logger')(__filename)
  * Outputs ADG in JSON format compatible with the ADG visualization tools
  */
 class LangGraphADGOutputStrategy extends OutputStrategy {
+  static outputStrategyId = 'langgraph_adg'
+
   /**
    * Constructor
    */
   constructor() {
     super()
     this.outputFilePath = 'langgraph-adg.json'
+  }
+
+  /**
+   * Get output file path
+   */
+  getOutputFilePath(): string {
+    return this.outputFilePath
   }
 
   /**
@@ -32,7 +41,7 @@ class LangGraphADGOutputStrategy extends OutputStrategy {
       return
     }
 
-    const findings = allFindings[LangGraphADGOutputStrategy.outputStrategyId]
+    const findings = allFindings[LangGraphADGOutputStrategy.outputStrategyId] || allFindings['langgraph_adg']
 
     if (!findings || findings.length === 0) {
       logger.warn('[LangGraph ADG] No LangGraph ADG findings generated')
@@ -49,6 +58,11 @@ class LangGraphADGOutputStrategy extends OutputStrategy {
       const adgFilePath = pathMod.join(config.reportDir, outputFilePath)
 
       logger.info(`[LangGraph ADG] Writing ADG to ${adgFilePath}`)
+      logger.info(`[LangGraph ADG] Report directory: ${config.reportDir}`)
+      logger.info(`[LangGraph ADG] Output file path: ${outputFilePath}`)
+
+      // Ensure directory exists
+      fs.ensureDirSync(config.reportDir)
 
       // Format the output for better readability
       const output = {
@@ -67,11 +81,26 @@ class LangGraphADGOutputStrategy extends OutputStrategy {
         llms: finding.llms || [],
       }
 
+      logger.info(`[LangGraph ADG] Output data: ${JSON.stringify({
+        graphs: output.summary.totalGraphs,
+        agents: output.summary.totalAgents,
+        tools: output.summary.totalTools,
+        llms: output.summary.totalLLMs,
+      })}`)
+
       // Write to file with pretty printing
       const jsonContent = JSON.stringify(output, null, 2)
       fs.writeFileSync(adgFilePath, jsonContent, 'utf8')
 
       logger.info(`[LangGraph ADG] Successfully wrote ADG to ${adgFilePath}`)
+      logger.info(`[LangGraph ADG] File size: ${jsonContent.length} bytes`)
+
+      // Verify file was written
+      if (fs.existsSync(adgFilePath)) {
+        logger.info(`[LangGraph ADG] File exists at ${adgFilePath}`)
+      } else {
+        logger.error(`[LangGraph ADG] File was not created at ${adgFilePath}`)
+      }
 
       // Also log summary to console
       printf(`\n[LangGraph ADG Analysis Summary]`)
@@ -82,12 +111,11 @@ class LangGraphADGOutputStrategy extends OutputStrategy {
       printf(`  Output: ${adgFilePath}\n`)
     } catch (error: any) {
       logger.error(`[LangGraph ADG] Error writing output: ${error.message}`)
-      logger.error(error.stack)
+      logger.error(`[LangGraph ADG] Error stack: ${error.stack}`)
+      printf(`\n[LangGraph ADG] ERROR: Failed to write output file: ${error.message}\n`)
     }
   }
 }
-
-LangGraphADGOutputStrategy.outputStrategyId = 'langgraph_adg'
 
 module.exports = LangGraphADGOutputStrategy
 
