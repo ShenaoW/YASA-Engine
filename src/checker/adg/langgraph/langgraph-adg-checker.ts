@@ -1,12 +1,8 @@
 const _ = require('lodash')
 const Checker = require('../../common/checker')
-const LangGraphADGOutputStrategy = require('../../common/output/langgraph-adg-output-strategy')
-const constValue = require('../../../util/constant')
 const astUtil = require('../../../util/ast-util')
 const logger = require('../../../util/logger')(__filename)
 const config = require('../../../config')
-const EntryPoint = require('../../../engine/analyzer/common/entrypoint')
-const { extractRelativePath } = require('../../../util/file-util')
 const SourceLine = require('../../../engine/analyzer/common/source-line')
 
 /**
@@ -217,6 +213,7 @@ class LangGraphADGChecker extends Checker {
 
       // Clean tools: remove circular references
       const cleanTools = Array.from(this.tools.values()).map((tool: any) => ({
+        namespace: tool.namespace,
         name: tool.name,
         type: tool.type,
         codeSnippet: tool.codeSnippet || null,
@@ -224,7 +221,8 @@ class LangGraphADGChecker extends Checker {
 
       // Clean LLMs: remove circular references
       const cleanLLMs = Array.from(this.llms.values()).map((llm: any) => ({
-        varName: llm.varName,
+        namespace: llm.namespace,
+        name: llm.name,
         modelName: llm.modelName,
       }));
 
@@ -238,7 +236,7 @@ class LangGraphADGChecker extends Checker {
 
       this.resultManager.newFinding(
         finding,
-        'langgraph_adg'
+        'langgraph_adg_yaml'
       );
       logger.info(`[LangGraph ADG] Generated ${adgs.length} ADG(s)`);
     } else {
@@ -350,6 +348,7 @@ class LangGraphADGChecker extends Checker {
       if (agentInfo) {
         nodeInfo.isAgent = true;
         nodeInfo.agentInfo = agentInfo;
+        nodeInfo.agent = agentVar; // Store agent variable name for YAML variable references
       }
 
       // Analyze function body AST to find Command returns
@@ -1258,17 +1257,21 @@ class LangGraphADGChecker extends Checker {
     // Determine tool type
     const toolType = this.determineToolType(toolName);
 
+    // Extract name from namespace (toolName is the namespace)
+    const name = this.extractShortName(toolName);
+
     // Extract code snippet
     const codeSnippet = this.extractToolCodeSnippet(this.analyzer, toolInfo);
 
     // Register tool
     this.tools.set(toolName, {
-      name: toolName,
+      name: name,            // Short variable name
+      namespace: toolName,  // Full path/variable name
       type: toolType,
       codeSnippet: codeSnippet,
     });
 
-    logger.debug(`[LangGraph ADG] Registered tool: ${toolName} (type: ${toolType})`);
+    logger.debug(`[LangGraph ADG] Registered tool: namespace=${toolName}, name=${name}, type=${toolType}`);
     return toolName;
   }
 
@@ -1360,13 +1363,41 @@ class LangGraphADGChecker extends Checker {
   }
   
   /**
+   * Extract short name from variable name
+   * Unified style for llms, tools, and agents:
+   * - For path-based names: /multi-agent-collaboration.python_repl_tool -> python_repl_tool
+   * - For dot-separated names: langchain_anthropic.ChatAnthropic(var model:any=...) -> ChatAnthropic
+   * - For simple names: research_agent -> research_agent
+   */
+  extractShortName(varName: string): string {
+    if (!varName) return 'unknown';
+    
+    if (varName.includes('.')) {
+      const parts = varName.split('.');
+      const lastPart = parts[parts.length - 1];
+      // Remove parentheses and everything inside: ChatAnthropic(var model:any=...) -> ChatAnthropic
+      const match = lastPart.match(/^([^(]+)/);
+      if (match) {
+        return match[1].trim();
+      }
+      return lastPart;
+    }
+    
+    // For simple names without dots: return as is
+    return varName;
+  }
+
+  /**
    * Register LLM instance
-   * @param llmVarName - Variable name of the LLM
+   * @param llmVarName - Variable name (namespace) of the LLM
    * @param modelName - Model name (e.g., "claude-3-5-sonnet-20241022", "gpt-4")
    * @param astNode - AST node for code snippet extraction (optional)
    */
   registerLLM(llmVarName: string, modelName: string, astNode?: any) {
     if (!llmVarName) return;
+
+    // Extract name from namespace
+    const name = this.extractShortName(llmVarName);
 
     // Skip if already registered
     if (this.llms.has(llmVarName)) {
@@ -1380,11 +1411,12 @@ class LangGraphADGChecker extends Checker {
     }
 
     this.llms.set(llmVarName, {
-      varName: llmVarName,
+      name: name,             // Short variable name
+      namespace: llmVarName,  // Full variable name
       modelName: modelName || "unknown",
     });
 
-    logger.debug(`[LangGraph ADG] Registered LLM: ${llmVarName} (model: ${modelName || "unknown"})`);
+    logger.debug(`[LangGraph ADG] Registered LLM: namespace=${llmVarName}, name=${name}, model=${modelName || "unknown"}`);
   }
 
   /**
@@ -1513,12 +1545,23 @@ class LangGraphADGChecker extends Checker {
           systemPrompt: nodeInfo.agentInfo.systemPrompt,
         };
       }
-      adg.nodes.push({
+      const nodeData: any = {
         name: nodeName,
         type: nodeInfo.isAgent ? "agent" : "node",
         functionName: nodeInfo.functionName,
-        agentInfo: cleanAgentInfo,
-      });
+      };
+      
+      // Add agent reference for YAML variable references
+      if (nodeInfo.agent) {
+        nodeData.agent = nodeInfo.agent;
+      }
+      
+      // Add agentInfo for detailed information
+      if (cleanAgentInfo) {
+        nodeData.agentInfo = cleanAgentInfo;
+      }
+      
+      adg.nodes.push(nodeData);
     }
 
     // Add edges
