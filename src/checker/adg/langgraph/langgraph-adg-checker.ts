@@ -131,15 +131,14 @@ class LangGraphADGChecker extends Checker {
 
     logger.debug(`[LangGraph ADG] Function call detected: ${funcName}`);
 
-    // ==================== Graph Instantiation ====================
+    // ================ Graph Instantiation =================
     // Detect: workflow = StateGraph(MessagesState)
-    // Check if this function call is StateGraph instantiation in an assignment
-
+    // Check if this function call is StateGraph instantiation
     if (funcName.endsWith('StateGraph')) {
       this.handleStateGraphInstantiation(node, state, argvalues, info)
     }
 
-    // ==================== Graph Context ====================
+    // ==================== Graph Method ====================
     // Detect: workflow.add_node("researcher", research_node)
     if (funcName.endsWith('add_node')) {
       this.handleAddNode(node, state, argvalues, info)
@@ -172,7 +171,7 @@ class LangGraphADGChecker extends Checker {
       this.handleInterrupt(node, state, argvalues)
     }
 
-    // ==================== Agent Creation ====================
+    // ================ Agent Creation ==================
     // Detect: create_XXX_agent calls
     // At this point, argvalues contains symbol values from YASA's pointer analysis
     if (this.isAgentCreationMethod(funcName)) {
